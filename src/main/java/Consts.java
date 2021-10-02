@@ -16,4 +16,5 @@ public interface Consts {
             .put(7, 0)
             .build();
 
+    int MAX_PREDICTABLE_DAYS_COUNT_FOR_DEBUGGING_COMPLETION_BORDER = 500;
 }

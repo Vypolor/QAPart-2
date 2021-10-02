@@ -1,3 +1,4 @@
+import com.sun.org.apache.bcel.internal.Const;
 import org.apache.poi.hssf.usermodel.HSSFSheet;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.Row;
@@ -6,6 +7,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -15,6 +17,7 @@ public class Calculator {
 
     private static double calculatedK = 0.0;
     private static double calculatedN0 = 0.0;
+    private static double lastErrorsCountPerDay = 0.0;
 
     private static class CalculateKIntermediateResultRecord
     {
@@ -47,7 +50,41 @@ public class Calculator {
         }
     }
 
-    private static HSSFWorkbook calculateKAndGatherStatisticToXLS(Map<Integer, Integer> inputValues){
+    private static double calculateA(Map<Integer, Integer> inputValues, double calculatedB){
+        AtomicInteger sumDays = new AtomicInteger();
+        AtomicReference<Double> sumErrorsPerTime = new AtomicReference<>(0.0);
+
+        inputValues.forEach((curTime, curErrors) -> {
+            sumDays.addAndGet(curTime);
+            sumErrorsPerTime.updateAndGet(v -> v + curErrors);
+        });
+
+        double numerator = sumErrorsPerTime.get() - calculatedB * sumDays.get();
+
+        return numerator / 7;
+    }
+
+    private static double calculateB(Map<Integer, Integer> inputValues){
+
+        AtomicReference<Double> diminutiveInNumerator = new AtomicReference<>(0.0);
+        AtomicInteger sumDays = new AtomicInteger();
+        AtomicReference<Double> sumErrorsPerTime = new AtomicReference<>(0.0);
+        AtomicInteger sumSquareDays = new AtomicInteger();
+
+        inputValues.forEach((curTime, curErrors) -> {
+            diminutiveInNumerator.updateAndGet(v -> v + curTime * curErrors);
+            sumDays.addAndGet(curTime);
+            sumErrorsPerTime.updateAndGet(v -> v + curErrors);
+            sumSquareDays.addAndGet((int) Math.pow(curTime, 2));
+        });
+
+        double numerator = 7 * diminutiveInNumerator.get() - sumDays.get() * sumErrorsPerTime.get();
+        double denominator = 7 * sumSquareDays.get() - Math.pow(sumDays.get(), 2);
+
+        return numerator/denominator;
+    }
+
+    private static HSSFWorkbook calculateKAndGatherStatisticTable(Map<Integer, Integer> inputValues){
 
         List<CalculateKIntermediateResultRecord> calculateKStatistic = new ArrayList<>();
 
@@ -176,7 +213,7 @@ public class Calculator {
     }
 
     // Table for graph of changes in the number of detected errors over time
-    private static void createErrorsPerTimeGraphTable(HSSFWorkbook lastModifiedWorkbook){
+    private static void createErrorsPerTimeGraphTable(HSSFWorkbook lastModifiedWorkbook, Map<Integer, Integer> inputValues){
 
         // Create sheet with 'Graph' name
         HSSFSheet sheet = lastModifiedWorkbook.createSheet("Graph");
@@ -190,7 +227,7 @@ public class Calculator {
 
         rowNum.incrementAndGet();
 
-        Consts.ERRORS_PER_INTERVAL_MAP.forEach((curTime, curErrors) ->{
+        inputValues.forEach((curTime, curErrors) ->{
             Row currentRow = sheet.createRow(rowNum.get());
             currentRow.createCell(0).setCellValue(curTime);
             currentRow.createCell(1).setCellValue(curErrors);
@@ -200,7 +237,7 @@ public class Calculator {
     }
 
     // Least square method calculation table
-    private static void createLSMTable(HSSFWorkbook lastModifiedWorkbook){
+    private static void createLSMTable(HSSFWorkbook lastModifiedWorkbook, Map<Integer, Integer> inputValues){
 
         AtomicReference<Double> discrepancySquaresSum = new AtomicReference<>(0.0);
 
@@ -218,20 +255,24 @@ public class Calculator {
         row.createCell(4).setCellValue("Square discrepancy");
         rowNum.incrementAndGet();
 
-        Consts.ERRORS_PER_INTERVAL_MAP.forEach((curTime, curErrors) ->{
+        inputValues.forEach((curTime, curErrors) ->{
             Row currentRow = sheet.createRow(rowNum.get());
             currentRow.createCell(0).setCellValue(curTime);
             currentRow.createCell(1).setCellValue(curErrors);
 
-            double deltaErrorsPerDay = calculatedN0 * calculatedK * 1 * Math.pow(Math.E, calculatedK * curTime * (-1));
-            currentRow.createCell(2).setCellValue(deltaErrorsPerDay);
+            double errorsPerDayCalc = calculatedN0 * calculatedK * 1 * Math.pow(Math.E, calculatedK * curTime * (-1));
+            lastErrorsCountPerDay = errorsPerDayCalc;
+            currentRow.createCell(2).setCellValue(errorsPerDayCalc);
 
-            double discrepancy = curErrors - calculatedN0 * 1 * calculatedK * Math.pow(Math.E, calculatedK * curTime * (-1));
+            double discrepancy = curErrors - errorsPerDayCalc;
             currentRow.createCell(3).setCellValue(discrepancy);
             discrepancySquaresSum.updateAndGet(v -> v + Math.pow(discrepancy, 2.0));
             currentRow.createCell(4).setCellValue(Math.pow(discrepancy, 2.0));
+
             rowNum.incrementAndGet();
         });
+
+
 
         Row lastRow = sheet.createRow(rowNum.get());
 
@@ -240,13 +281,110 @@ public class Calculator {
 
     }
 
+    private static void createLinearInterpolationTable(HSSFWorkbook lastModifiedWorkbook, Map<Integer, Integer> inputValues){
+
+        AtomicReference<Double> discrepancySquaresSum = new AtomicReference<>(0.0);
+        // Create sheet with 'Interpolation and extrapolation' name
+        HSSFSheet sheet = lastModifiedWorkbook.createSheet("Interpolation and extrapolation");
+
+        AtomicInteger rowNum = new AtomicInteger();
+
+        // Headers
+        Row row = sheet.createRow(rowNum.get());
+        row.createCell(0).setCellValue("Day");
+        row.createCell(1).setCellValue("Delta errors count per day");
+        row.createCell(2).setCellValue("Delta errors count per day (calc)");
+        row.createCell(3).setCellValue("Discrepancy");
+        row.createCell(4).setCellValue("Square discrepancy");
+        rowNum.incrementAndGet();
+
+        // First row (because of time starts from 0)
+
+        Map<Integer, Integer> inputValuesWithZero = new HashMap<>();
+        inputValuesWithZero.put(0, 0);
+        inputValuesWithZero.putAll(inputValues);
+
+        double B = calculateB(inputValuesWithZero);
+        double A = calculateA(inputValuesWithZero, B);
+        System.out.println(A);
+        System.out.println(B);
+
+        inputValuesWithZero.forEach((curTime, curErrors) ->{
+            Row currentRow = sheet.createRow(rowNum.get());
+            currentRow.createCell(0).setCellValue(curTime);
+            currentRow.createCell(1).setCellValue(curErrors);
+
+            double errorsPerDayCalc = A + B * curTime;
+            currentRow.createCell(2).setCellValue(errorsPerDayCalc);
+
+            double discrepancy = curErrors - errorsPerDayCalc;
+            currentRow.createCell(3).setCellValue(discrepancy);
+            currentRow.createCell(4).setCellValue(Math.pow(discrepancy, 2));
+
+            discrepancySquaresSum.updateAndGet(v -> v + Math.pow(discrepancy, 2.0));
+
+            rowNum.incrementAndGet();
+        });
+
+        Row lastRow = sheet.createRow(rowNum.get());
+
+        lastRow.createCell(0).setCellValue("Sum of discrepancy squares");
+        lastRow.createCell(1).setCellValue(discrepancySquaresSum.get());
+    }
+
+    private static void createDebuggingCompletionPredictionTable(HSSFWorkbook lastModifiedWorkbook, double probabilityGoal){
+        // Create sheet with 'Debugging completion time prediction' name
+        HSSFSheet sheet = lastModifiedWorkbook.createSheet("Debugging completion time prediction");
+
+        int rowNum = 0;
+
+        // Headers
+        Row row = sheet.createRow(rowNum);
+        row.createCell(0).setCellValue("Last errors count per day");
+        row.createCell(1).setCellValue("N0");
+        row.createCell(2).setCellValue("K");
+        row.createCell(3).setCellValue("Probability of no errors");
+        row.createCell(4).setCellValue("Predicted debugging days count");
+        ++rowNum;
+
+        double currentProbability = 0.0;
+        int predictableDaysCountForDebuggingCompletion = 7;
+
+        while (probabilityGoal > currentProbability)
+        {
+            ++predictableDaysCountForDebuggingCompletion;
+            currentProbability = 1 - (calculatedN0*calculatedK*Math.pow(Math.E, calculatedK * predictableDaysCountForDebuggingCompletion * (-1))/calculatedK);
+
+            if (predictableDaysCountForDebuggingCompletion > Consts.MAX_PREDICTABLE_DAYS_COUNT_FOR_DEBUGGING_COMPLETION_BORDER){
+                System.out.println("Very long debugging... Please reduce the probability of no error");
+            }
+        }
+
+
+        row = sheet.createRow(rowNum);
+        row.createCell(0).setCellValue(lastErrorsCountPerDay);
+        row.createCell(1).setCellValue(calculatedN0);
+        row.createCell(2).setCellValue(calculatedK);
+        row.createCell(3).setCellValue(currentProbability);
+        if (predictableDaysCountForDebuggingCompletion > Consts.MAX_PREDICTABLE_DAYS_COUNT_FOR_DEBUGGING_COMPLETION_BORDER)
+        {
+            row.createCell(4).setCellValue("Years and years...");
+        }
+        else {
+            row.createCell(4).setCellValue(predictableDaysCountForDebuggingCompletion);
+        }
+
+    }
+
     // Creates full Excel file with some sheets
     public static void createReport(Map<Integer, Integer> inputValues){
         // Excel file
-        HSSFWorkbook workbook = calculateKAndGatherStatisticToXLS(inputValues);
+        HSSFWorkbook workbook = calculateKAndGatherStatisticTable(inputValues);
         calculateAndCacheN0(inputValues, calculatedK);
-        createErrorsPerTimeGraphTable(workbook);
-        createLSMTable(workbook);
+        createErrorsPerTimeGraphTable(workbook, inputValues);
+        createLSMTable(workbook, inputValues);
+        createLinearInterpolationTable(workbook,inputValues);
+        createDebuggingCompletionPredictionTable(workbook, 0.999);
 
         // Save excel
         try (FileOutputStream out = new FileOutputStream(new File(PathConsts.PATH_TO_SAVE_REPORT_FILE))) {
@@ -255,6 +393,5 @@ public class Calculator {
             e.printStackTrace();
         }
         System.out.println("Excel saved!");
-
     }
 }
