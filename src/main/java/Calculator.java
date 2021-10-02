@@ -195,6 +195,40 @@ public class Calculator {
 
     }
 
+    private static void createLSMTableExtended(HSSFWorkbook lastModifiedWorkbook, Map<Integer, Integer> inputValues, int daysBorder){
+
+        // Create sheet with 'LSM' name
+        HSSFSheet sheet = lastModifiedWorkbook.createSheet("Extended LSM");
+
+        int rowNum = 0;
+
+        // Headers
+        Row row = sheet.createRow(rowNum);
+
+        row.createCell(0).setCellValue("Day");
+        row.createCell(1).setCellValue("Delta errors count per day");
+        row.createCell(2).setCellValue("Delta errors count per day (calc)");
+
+        ++rowNum;
+
+        for (int curDay = 0; curDay < daysBorder; ++curDay){
+
+            Row currentRow = sheet.createRow(rowNum);
+
+            currentRow.createCell(0).setCellValue(curDay);
+
+            if (inputValues.containsKey(curDay)){
+                currentRow.createCell(1).setCellValue(inputValues.get(curDay));
+            }
+
+            double errorsPerDayCalc = calculatedN0 * calculatedK * 1 * Math.pow(Math.E, calculatedK * curDay * (-1));
+            currentRow.createCell(2).setCellValue(errorsPerDayCalc);
+
+            ++rowNum;
+        }
+
+    }
+
     private static double calculateA(Map<Integer, Integer> inputValuesWithZero, double calculatedB){
         AtomicInteger sumDays = new AtomicInteger();
         AtomicReference<Double> sumErrorsPerTime = new AtomicReference<>(0.0);
@@ -331,6 +365,7 @@ public class Calculator {
         calculateKAndGatherStatisticTable(workbook, inputValues);
         createErrorsPerTimeGraphTable(workbook, inputValues);
         createLSMTable(workbook, inputValues);
+        createLSMTableExtended(workbook, inputValues, 12);
         createLinearInterpolationTable(workbook,inputValues);
         createDebuggingCompletionPredictionTable(workbook, Consts.NO_ERRORS_PROBABILITY_GOAL);
 
