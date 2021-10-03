@@ -7,6 +7,6 @@ public class DjMorand {
 
     public static void main(String[] args) {
 
-        Calculator.createReport(Consts.ERRORS_PER_INTERVAL_MAP);
+        Calculator.createReport(Consts.ERRORS_PER_INTERVAL_MAP, Consts.NO_ERRORS_PROBABILITY_GOAL);
     }
 }
